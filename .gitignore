@@ -1,0 +1,35 @@
+# 出力CSVファイル
+output/*.csv
+
+# Python キャッシュ
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# 仮想環境
+.venv/
+venv/
+env/
+
+# エディタ設定
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS 固有
+.DS_Store
+Thumbs.db
+
+# ログ
+*.log
+
+# 入力データ (必要に応じてコメントアウト)
+# input/*.csv

@@ -102,20 +102,65 @@ def build_hotpixel_map(hotpixel_dir: Path) -> set[tuple[int, int]]:
 # CSV 読み込み
 # ─────────────────────────────────────────
 
+# CSV カラム定義（ヘッダー行なし、実際の列順）
+_CSV_COLUMNS = ["x", "y", "polarity", "timestamp"]
+
+
+def parse_csv_geometry(csv_path: Path) -> tuple[int, int] | None:
+    """
+    CSV ファイルの先頭にある `%geometry:W,H` 行を読み取り、
+    解像度 (W, H) を返す。該当行がなければ None を返す。
+
+    例: `%geometry:320,320`  →  (320, 320)
+    """
+    with open(csv_path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            if not line.startswith("%"):
+                break  # データ行に達したら終了
+            if line.startswith("%geometry:"):
+                try:
+                    _, wh = line.split(":")
+                    w, h = wh.strip().split(",")
+                    return (int(w), int(h))
+                except ValueError:
+                    logger.warning(f"geometry 行のパースに失敗: '{line}'")
+    return None
+
+
 def load_events_csv(csv_path: Path) -> pd.DataFrame:
     """
     CSV ファイルからイベントデータを読み込む。
 
-    期待するカラム: timestamp, x, y, polarity
-    polarity は 0/1 または True/False。
-    timestamp は整数 (マイクロ秒) を想定。
-    """
-    df = pd.read_csv(csv_path)
+    フォーマット:
+    - 先頭に `%geometry:W,H` などの `%` で始まるメタデータ行が含まれる場合がある
+    - ヘッダー行なし
+    - 列順: x, y, polarity, timestamp
+    - polarity は 0/1
+    - timestamp は整数 (マイクロ秒)
 
-    required_cols = {"timestamp", "x", "y", "polarity"}
-    missing = required_cols - set(df.columns)
-    if missing:
-        raise ValueError(f"CSV に必要なカラムがありません: {missing}  (検出されたカラム: {list(df.columns)})")
+    例:
+        %geometry:320,320
+        133,123,0,3406784
+        180,58,1,3406785
+    """
+    # % で始まる行数を数えてスキップ行数を決定
+    skip_rows = 0
+    with open(csv_path, "r") as f:
+        for line in f:
+            if line.strip().startswith("%"):
+                skip_rows += 1
+            else:
+                break
+
+    df = pd.read_csv(
+        csv_path,
+        header=None,
+        names=_CSV_COLUMNS,
+        skiprows=skip_rows,
+    )
 
     df["timestamp"] = df["timestamp"].astype(int)
     df["x"] = df["x"].astype(int)
@@ -124,7 +169,7 @@ def load_events_csv(csv_path: Path) -> pd.DataFrame:
 
     # タイムスタンプの昇順ソート（念のため）
     df = df.sort_values("timestamp").reset_index(drop=True)
-    logger.info(f"CSV 読み込み完了: {len(df)} イベント")
+    logger.info(f"CSV 読み込み完了: {len(df)} イベント (メタデータ行スキップ数: {skip_rows})")
     return df
 
 
@@ -219,16 +264,16 @@ def apply_fast_decay_filter(
 # ─────────────────────────────────────────
 
 def event_store_to_dataframe(store: dv.EventStore) -> pd.DataFrame:
-    """dv.EventStore を pandas DataFrame に変換する。"""
+    """dv.EventStore を pandas DataFrame に変換する (列順: x, y, polarity, timestamp)。"""
     rows = []
     for ev in store:
         rows.append({
-            "timestamp": ev.timestamp(),
             "x": ev.x(),
             "y": ev.y(),
             "polarity": int(ev.polarity()),
+            "timestamp": ev.timestamp(),
         })
-    return pd.DataFrame(rows, columns=["timestamp", "x", "y", "polarity"])
+    return pd.DataFrame(rows, columns=_CSV_COLUMNS)
 
 
 # ─────────────────────────────────────────
@@ -267,7 +312,11 @@ def process_file(
         return
 
     # 3. 解像度を決定
-    res = resolution if resolution else detect_resolution(df)
+    #    優先順位: コマンドライン引数 > CSVの%geometry行 > データから自動推定
+    if resolution:
+        res = resolution
+    else:
+        res = parse_csv_geometry(csv_path) or detect_resolution(df)
     logger.info(f"使用する解像度: width={res[0]}, height={res[1]}")
 
     # 4. EventStore 構築
@@ -279,7 +328,7 @@ def process_file(
     if filter_mode in ("fd", "both"):
         store = apply_fast_decay_filter(store, res, fd_half_life_ms, fd_subdivision, fd_noise_threshold)
 
-    # 6. 結果を DataFrame に変換して保存
+    # 6. 結果を DataFrame に変換して保存（入力と同じ列順: x, y, polarity, timestamp）
     df_out = event_store_to_dataframe(store)
     out_path = output_dir / csv_path.name
     df_out.to_csv(out_path, index=False)

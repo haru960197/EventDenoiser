@@ -32,4 +32,6 @@ Thumbs.db
 *.log
 
 # 入力データ (必要に応じてコメントアウト)
-# input/*.csv
+input/*.csv
+
+fetch_files.sh

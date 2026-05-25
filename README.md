@@ -31,6 +31,13 @@ EventDenoiser/
 ### 依存パッケージのインストール
 
 ```bash
+# 1. 仮想環境の作成
+python3 -m venv .venv
+
+# 2. 仮想環境の有効化（アクティベート）
+source .venv/bin/activate
+
+# 3. パッケージのインストール
 pip install -r requirements.txt
 ```
 

@@ -1,5 +1,5 @@
-# 出力CSVファイル
-output/*.csv
+# 出力ファイル
+output/*
 
 # Python キャッシュ
 __pycache__/
@@ -32,6 +32,8 @@ Thumbs.db
 *.log
 
 # 入力データ (必要に応じてコメントアウト)
-input/*.csv
+input/*
+
+hotpixel_maps/*
 
 fetch_files.sh

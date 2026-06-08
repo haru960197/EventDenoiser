@@ -34,6 +34,4 @@ Thumbs.db
 # 入力データ (必要に応じてコメントアウト)
 input/*
 
-hotpixel_maps/*
-
 fetch_files.sh

@@ -3,11 +3,9 @@
 EventDenoiser - イベントカメラデータのノイズ除去スクリプト
 
 処理の流れ:
-1. hotpixel_maps/ ディレクトリ内の複数ファイルを読み込み、全ファイルに共通するホットピクセルを検出
-2. ホットピクセルマップを構築し、対象ピクセルからのイベントをドロップ
-3. dv-processing の EventStore にイベントをプッシュ
-4. BackgroundActivityNoiseFilter および FastDecayNoiseFilter でノイズ除去
-5. 結果を output/ に保存
+1. dv-processing の EventStore にイベントをプッシュ
+2. BackgroundActivityNoiseFilter および FastDecayNoiseFilter でノイズ除去
+3. 結果を output/ に保存
 """
 
 import argparse
@@ -31,71 +29,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ─────────────────────────────────────────
-# ホットピクセルマップ
-# ─────────────────────────────────────────
-
-def parse_hotpixel_file(filepath: Path) -> set[tuple[int, int]]:
-    """
-    ホットピクセル検出結果ファイルをパースして (x, y) のセットを返す。
-
-    ファイル形式:
-        % ... (メタデータ行)
-        % end
-        33 0
-        139 0
-        ...
-    """
-    pixels: set[tuple[int, int]] = set()
-    in_data_section = False
-
-    with open(filepath, "r") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            if line == "% end":
-                in_data_section = True
-                continue
-            if line.startswith("%"):
-                continue  # メタデータ行をスキップ
-            if in_data_section:
-                parts = line.split()
-                if len(parts) >= 2:
-                    try:
-                        x = int(parts[0])
-                        y = int(parts[1])
-                        pixels.add((x, y))
-                    except ValueError:
-                        logger.warning(f"パースできない行をスキップ: '{line}' in {filepath}")
-
-    return pixels
-
-
-def build_hotpixel_map(hotpixel_dir: Path) -> set[tuple[int, int]]:
-    """
-    hotpixel_dir 内の全テキストファイルを読み込み、
-    全ファイルに共通して出現するピクセルをホットピクセルとして返す。
-    """
-    txt_files = sorted(hotpixel_dir.glob("*.txt"))
-    if not txt_files:
-        logger.warning(f"ホットピクセルファイルが {hotpixel_dir} に見つかりません。ホットピクセルフィルタはスキップされます。")
-        return set()
-
-    logger.info(f"{len(txt_files)} 個のホットピクセルファイルを読み込みます:")
-    for f in txt_files:
-        logger.info(f"  {f.name}")
-
-    pixel_counts: dict[tuple[int, int], int] = {}
-    for fp in txt_files:
-        pixels = parse_hotpixel_file(fp)
-        for px in pixels:
-            pixel_counts[px] = pixel_counts.get(px, 0) + 1
-
-    total_files = len(txt_files)
-    hotpixels = {px for px, cnt in pixel_counts.items() if cnt == total_files}
-    logger.info(f"全 {total_files} ファイルに共通するホットピクセル数: {len(hotpixels)}")
-    return hotpixels
 
 
 # ─────────────────────────────────────────
@@ -173,23 +106,6 @@ def load_events_csv(csv_path: Path) -> pd.DataFrame:
     return df
 
 
-# ─────────────────────────────────────────
-# ホットピクセルフィルタ
-# ─────────────────────────────────────────
-
-def filter_hotpixels(df: pd.DataFrame, hotpixels: set[tuple[int, int]]) -> pd.DataFrame:
-    """
-    ホットピクセルに一致するイベントをデータフレームから除去する。
-    """
-    if not hotpixels:
-        return df
-
-    before = len(df)
-    mask = df.apply(lambda row: (row["x"], row["y"]) not in hotpixels, axis=1)
-    df_filtered = df[mask].reset_index(drop=True)
-    removed = before - len(df_filtered)
-    logger.info(f"ホットピクセルフィルタ: {removed} イベント除去 ({before} → {len(df_filtered)})")
-    return df_filtered
 
 
 # ─────────────────────────────────────────
@@ -290,7 +206,6 @@ def detect_resolution(df: pd.DataFrame) -> tuple[int, int]:
 def process_file(
     csv_path: Path,
     output_dir: Path,
-    hotpixels: set[tuple[int, int]],
     resolution: tuple[int, int] | None,
     filter_mode: str,
     ba_duration_ms: int,
@@ -304,11 +219,8 @@ def process_file(
     # 1. CSV 読み込み
     df = load_events_csv(csv_path)
 
-    # 2. ホットピクセルフィルタ
-    df = filter_hotpixels(df, hotpixels)
-
     if df.empty:
-        logger.warning("ホットピクセル除去後にイベントが残っていません。スキップします。")
+        logger.warning("入力イベントがありません。スキップします。")
         return
 
     # 3. 解像度を決定
@@ -352,12 +264,7 @@ def main() -> None:
         default=Path("output"),
         help="出力ディレクトリのパス",
     )
-    parser.add_argument(
-        "--hotpixel-dir",
-        type=Path,
-        default=Path("hotpixel_maps"),
-        help="ホットピクセル検出結果ファイル (.txt) が入っているディレクトリ",
-    )
+
     parser.add_argument(
         "--resolution",
         type=str,
@@ -411,8 +318,7 @@ def main() -> None:
     # 出力ディレクトリの確認・作成
     args.output.mkdir(parents=True, exist_ok=True)
 
-    # ホットピクセルマップの構築
-    hotpixels = build_hotpixel_map(args.hotpixel_dir)
+
 
     # 入力ファイルの列挙
     input_path: Path = args.input
@@ -436,7 +342,7 @@ def main() -> None:
             process_file(
                 csv_path=csv_path,
                 output_dir=args.output,
-                hotpixels=hotpixels,
+
                 resolution=resolution,
                 filter_mode=args.filter_mode,
                 ba_duration_ms=args.ba_duration_ms,
